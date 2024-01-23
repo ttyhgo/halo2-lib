@@ -380,6 +380,7 @@ mod scalar_field_impls {
     use crate::halo2_proofs::halo2curves::{
         bn256::{Fq as bn254Fq, Fr as bn254Fr},
         secp256k1::{Fp as secpFp, Fq as secpFq},
+        secp256r1::{Fp as secp256r1Fp, Fq as secp256r1Fq},
     };
     #[cfg(feature = "halo2-pse")]
     use ff::PrimeField;
@@ -446,6 +447,8 @@ mod scalar_field_impls {
     impl_scalar_field!(bn254Fq);
     impl_scalar_field!(secpFp);
     impl_scalar_field!(secpFq);
+    impl_scalar_field!(secp256r1Fp);
+    impl_scalar_field!(secp256r1Fq);
 }
 
 /// Module for reading parameters for Halo2 proving system from the file system.

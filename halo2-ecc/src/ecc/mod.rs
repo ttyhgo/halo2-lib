@@ -3,6 +3,7 @@ use crate::bigint::CRTInteger;
 use crate::fields::PrimeField;
 use crate::fields::{fp::FpConfig, FieldChip, PrimeFieldChip, Selectable};
 use crate::halo2_proofs::{arithmetic::CurveAffine, circuit::Value};
+use ff::Field;
 use group::{Curve, Group};
 use halo2_base::{
     gates::{GateInstructions, RangeInstructions},
@@ -145,16 +146,26 @@ pub fn ec_sub_unequal<F: PrimeField, FC: FieldChip<F>>(
 // we precompute lambda and constrain (2y) * lambda = 3 x^2 (mod p)
 // then we compute x_3 = lambda^2 - 2 x (mod p)
 //                 y_3 = lambda (x - x_3) - y (mod p)
-pub fn ec_double<F: PrimeField, FC: FieldChip<F>>(
+pub fn ec_double<F: PrimeField, FC: FieldChip<F>, C>(
     chip: &FC,
     ctx: &mut Context<F>,
     P: &EcPoint<F, FC::FieldPoint>,
-) -> EcPoint<F, FC::FieldPoint> {
+) -> EcPoint<F, FC::FieldPoint> 
+where
+    C: CurveAffine<Base = FC::FieldType>,
+{
     // removed optimization that computes `2 * lambda` while assigning witness to `lambda` simultaneously, in favor of readability. The difference is just copying `lambda` once
     let two_y = chip.scalar_mul_no_carry(ctx, &P.y, 2);
     let three_x = chip.scalar_mul_no_carry(ctx, &P.x, 3);
     let three_x_sq = chip.mul_no_carry(ctx, &three_x, &P.x);
-    let lambda = chip.divide_unsafe(ctx, &three_x_sq, &two_y);
+
+    // let lambda_numberator = chip.add_constant_no_carry(ctx, &three_x_sq, FC::fe_to_constant(C::a()));
+    let lambda_numberator = if C::a().is_zero().into() {
+        chip.add_constant_no_carry(ctx, &three_x_sq, FC::fe_to_constant(C::a()))
+    }else{
+        three_x_sq
+    };
+    let lambda = chip.divide_unsafe(ctx, &lambda_numberator, &two_y);
 
     // x_3 = lambda^2 - 2 x % p
     let lambda_sq = chip.mul_no_carry(ctx, &lambda, &lambda);
@@ -229,7 +240,7 @@ where
 // - `scalar_i < 2^{max_bits} for all i` (constrained by num_to_bits)
 // - `max_bits <= modulus::<F>.bits()`
 //   * P has order given by the scalar field modulus
-pub fn scalar_multiply<F: PrimeField, FC>(
+pub fn scalar_multiply<F: PrimeField, FC, C>(
     chip: &FC,
     ctx: &mut Context<F>,
     P: &EcPoint<F, FC::FieldPoint>,
@@ -239,6 +250,7 @@ pub fn scalar_multiply<F: PrimeField, FC>(
 ) -> EcPoint<F, FC::FieldPoint>
 where
     FC: FieldChip<F> + Selectable<F, Point = FC::FieldPoint>,
+    C: CurveAffineExt<Base = FC::FieldType>,
 {
     assert!(!scalar.is_empty());
     assert!((max_bits as u64) <= modulus::<F>().bits());
@@ -292,7 +304,7 @@ where
     cached_points.push(P.clone());
     for idx in 2..cache_size {
         if idx == 2 {
-            let double = ec_double(chip, ctx, P /*, b*/);
+            let double = ec_double::<F, FC, C>(chip, ctx, P /*, b*/);
             cached_points.push(double.clone());
         } else {
             let new_point = ec_add_unequal(chip, ctx, &cached_points[idx - 1], P, false);
@@ -311,7 +323,7 @@ where
     for idx in 1..num_windows {
         let mut mult_point = curr_point.clone();
         for _ in 0..window_bits {
-            mult_point = ec_double(chip, ctx, &mult_point);
+            mult_point = ec_double::<F, FC, C>(chip, ctx, &mult_point);
         }
         let add_point = ec_select_from_bits::<F, FC>(
             chip,
@@ -338,10 +350,13 @@ where
 {
     let lhs = chip.mul_no_carry(ctx, &P.y, &P.y);
     let mut rhs = chip.mul(ctx, &P.x, &P.x);
+    if !C::a().is_zero_vartime() {
+        rhs = chip.add_constant_no_carry(ctx, &rhs, FC::fe_to_constant(C::a()));
+    };
     rhs = chip.mul_no_carry(ctx, &rhs, &P.x);
 
-    let b = FC::fe_to_constant(C::b());
-    rhs = chip.add_constant_no_carry(ctx, &rhs, b);
+
+    rhs = chip.add_constant_no_carry(ctx, &rhs, FC::fe_to_constant(C::b()));
     let diff = chip.sub_no_carry(ctx, &lhs, &rhs);
     chip.check_carry_mod_to_zero(ctx, &diff)
 }
@@ -417,7 +432,7 @@ where
     let mut rand_start_vec = Vec::with_capacity(k + window_bits);
     rand_start_vec.push(base);
     for idx in 1..(k + window_bits) {
-        let base_mult = ec_double(chip, ctx, &rand_start_vec[idx - 1]);
+        let base_mult = ec_double::<F, FC, C>(chip, ctx, &rand_start_vec[idx - 1]);
         rand_start_vec.push(base_mult);
     }
     assert!(rand_start_vec.len() >= k + window_bits);
@@ -468,7 +483,7 @@ where
     // compute \sum_i x_i P_i + (2^{k + 1} - 1) * A
     for idx in 0..num_windows {
         for _ in 0..window_bits {
-            curr_point = ec_double(chip, ctx, &curr_point);
+            curr_point = ec_double::<F, FC, C>(chip, ctx, &curr_point);
         }
         for (cached_points, rounded_bits) in
             cached_points.chunks(cache_size).zip(rounded_bits.chunks(rounded_bitlen))
@@ -613,6 +628,7 @@ impl<F: PrimeField, FC: FieldChip<F>> EccChip<F, FC> {
     {
         let lhs = self.field_chip.mul_no_carry(ctx, &P.y, &P.y);
         let mut rhs = self.field_chip.mul(ctx, &P.x, &P.x);
+        rhs = self.field_chip.add_constant_no_carry(ctx, &rhs, FC::fe_to_constant(C::a()));
         rhs = self.field_chip.mul_no_carry(ctx, &rhs, &P.x);
 
         let b = FC::fe_to_constant(C::b());
@@ -665,12 +681,14 @@ impl<F: PrimeField, FC: FieldChip<F>> EccChip<F, FC> {
         ec_sub_unequal(&self.field_chip, ctx, P, Q, is_strict)
     }
 
-    pub fn double(
+    pub fn double<C>(
         &self,
         ctx: &mut Context<F>,
         P: &EcPoint<F, FC::FieldPoint>,
-    ) -> EcPoint<F, FC::FieldPoint> {
-        ec_double(&self.field_chip, ctx, P)
+    ) -> EcPoint<F, FC::FieldPoint>
+    where C: CurveAffineExt<Base = FC::FieldType>,
+    {
+        ec_double::<F, FC, C>(&self.field_chip, ctx, P)
     }
 
     pub fn is_equal(
@@ -729,15 +747,17 @@ where
         ec_select(&self.field_chip, ctx, P, Q, condition)
     }
 
-    pub fn scalar_mult(
+    pub fn scalar_mult<C>(
         &self,
         ctx: &mut Context<F>,
         P: &EcPoint<F, FC::FieldPoint>,
         scalar: &Vec<AssignedValue<F>>,
         max_bits: usize,
         window_bits: usize,
-    ) -> EcPoint<F, FC::FieldPoint> {
-        scalar_multiply::<F, FC>(&self.field_chip, ctx, P, scalar, max_bits, window_bits)
+    ) -> EcPoint<F, FC::FieldPoint>
+    where C: CurveAffineExt<Base = FC::FieldType>,
+    {
+        scalar_multiply::<F, FC, C>(&self.field_chip, ctx, P, scalar, max_bits, window_bits)
     }
 
     // TODO: put a check in place that scalar is < modulus of C::Scalar

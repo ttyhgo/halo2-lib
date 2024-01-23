@@ -12,7 +12,7 @@ use crate::halo2_proofs::{
     circuit::*,
     dev::MockProver,
     halo2curves::bn256::{Bn256, Fr, G1Affine},
-    halo2curves::secp256k1::{Fp, Fq, Secp256k1Affine},
+    halo2curves::secp256r1::{Fp, Fq, Secp256r1Affine},
     plonk::*,
     poly::commitment::ParamsProver,
     transcript::{Blake2bRead, Blake2bWrite, Challenge255},
@@ -20,7 +20,8 @@ use crate::halo2_proofs::{
 use rand_core::OsRng;
 
 use crate::fields::fp::FpConfig;
-use crate::secp256k1::FpChip;
+use crate::secp256r1::FpChip;
+use crate::secp256r1::FqChip;
 use crate::{
     ecc::{ecdsa::ecdsa_verify_no_pubkey_check, EccChip},
     fields::{fp::FpStrategy, FieldChip},
@@ -43,8 +44,8 @@ pub struct ECDSACircuit<F> {
     pub r: Option<Fq>,
     pub s: Option<Fq>,
     pub msghash: Option<Fq>,
-    pub pk: Option<Secp256k1Affine>,
-    pub G: Secp256k1Affine,
+    pub pk: Option<Secp256r1Affine>,
+    pub G: Secp256r1Affine,
     pub _marker: PhantomData<F>,
 }
 impl<F: PrimeField> Default for ECDSACircuit<F> {
@@ -54,7 +55,7 @@ impl<F: PrimeField> Default for ECDSACircuit<F> {
             s: None,
             msghash: None,
             pk: None,
-            G: Secp256k1Affine::generator(),
+            G: Secp256r1Affine::generator(),
             _marker: PhantomData,
         }
     }
@@ -70,7 +71,7 @@ impl<F: PrimeField> Circuit<F> for ECDSACircuit<F> {
 
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
         let path = var("ECDSA_CONFIG")
-            .unwrap_or_else(|_| "./src/secp256k1/configs/ecdsa_circuit.config".to_string());
+            .unwrap_or_else(|_| "./src/secp256r1/configs/ecdsa_circuit.config".to_string());
         let params: CircuitParams = serde_json::from_reader(
             File::open(&path).unwrap_or_else(|_| panic!("{path:?} file should exist")),
         )
@@ -156,7 +157,7 @@ impl<F: PrimeField> Circuit<F> for ECDSACircuit<F> {
                     ),
                 );
                 // test ECDSA
-                let ecdsa = ecdsa_verify_no_pubkey_check::<F, Fp, Fq, Secp256k1Affine>(
+                let ecdsa = ecdsa_verify_no_pubkey_check::<F, Fp, Fq, Secp256r1Affine>(
                     &ecc_chip.field_chip,
                     ctx,
                     &pk_assigned,
@@ -183,27 +184,28 @@ impl<F: PrimeField> Circuit<F> for ECDSACircuit<F> {
     }
 }
 
+use ff::Field;
 #[cfg(test)]
 #[test]
-fn test_secp256k1_ecdsa() {
+fn test_secp256r1_ecdsa() {
     let mut folder = std::path::PathBuf::new();
-    folder.push("./src/secp256k1");
+    folder.push("./src/secp256r1");
     folder.push("configs/ecdsa_circuit.config");
     let params_str = std::fs::read_to_string(folder.as_path())
-        .expect("src/secp256k1/configs/ecdsa_circuit.config file should exist");
+        .expect("src/secp256r1/configs/ecdsa_circuit.config file should exist");
     let params: CircuitParams = serde_json::from_str(params_str.as_str()).unwrap();
     let K = params.degree;
 
     // generate random pub key and sign random message
-    let G = Secp256k1Affine::generator();
-    let sk = <Secp256k1Affine as CurveAffine>::ScalarExt::random(OsRng);
-    let pubkey = Secp256k1Affine::from(G * sk);
-    let msg_hash = <Secp256k1Affine as CurveAffine>::ScalarExt::random(OsRng);
+    let G = Secp256r1Affine::generator();
+    let sk = <Secp256r1Affine as CurveAffine>::ScalarExt::random(OsRng);
+    let pubkey = Secp256r1Affine::from(G * sk);
+    let msg_hash = <Secp256r1Affine as CurveAffine>::ScalarExt::random(OsRng);
 
-    let k = <Secp256k1Affine as CurveAffine>::ScalarExt::random(OsRng);
+    let k = <Secp256r1Affine as CurveAffine>::ScalarExt::random(OsRng);
     let k_inv = k.invert().unwrap();
 
-    let r_point = Secp256k1Affine::from(G * k).coordinates().unwrap();
+    let r_point = Secp256r1Affine::from(G * k).coordinates().unwrap();
     let x = r_point.x();
     let x_bigint = fe_to_biguint(x);
     let r = biguint_to_fe::<Fq>(&(x_bigint % modulus::<Fq>()));
@@ -223,10 +225,9 @@ fn test_secp256k1_ecdsa() {
     assert_eq!(prover.verify(), Ok(()));
 }
 
-use ff::Field;
 #[cfg(test)]
 #[test]
-fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
+fn bench_secp256r1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
     use halo2_base::utils::fs::gen_srs;
 
     use crate::halo2_proofs::{
@@ -242,14 +243,14 @@ fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
     let _rng = OsRng;
 
     let mut folder = std::path::PathBuf::new();
-    folder.push("./src/secp256k1");
+    folder.push("./src/secp256r1");
 
     folder.push("configs/bench_ecdsa.config");
     let bench_params_file = std::fs::File::open(folder.as_path()).unwrap();
     folder.pop();
     folder.pop();
 
-    folder.push("results/ecdsa_bench.csv");
+    folder.push("results/ecdsa_bench_secp256r1.csv");
     let mut fs_results = std::fs::File::create(folder.as_path()).unwrap();
     folder.pop();
     folder.pop();
@@ -291,15 +292,15 @@ fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
         end_timer!(pk_time);
 
         // generate random pub key and sign random message
-        let G = Secp256k1Affine::generator();
-        let sk = <Secp256k1Affine as CurveAffine>::ScalarExt::random(OsRng);
-        let pubkey = Secp256k1Affine::from(G * sk);
-        let msg_hash = <Secp256k1Affine as CurveAffine>::ScalarExt::random(OsRng);
+        let G = Secp256r1Affine::generator();
+        let sk = <Secp256r1Affine as CurveAffine>::ScalarExt::random(OsRng);
+        let pubkey = Secp256r1Affine::from(G * sk);
+        let msg_hash = <Secp256r1Affine as CurveAffine>::ScalarExt::random(OsRng);
 
-        let k = <Secp256k1Affine as CurveAffine>::ScalarExt::random(OsRng);
+        let k = <Secp256r1Affine as CurveAffine>::ScalarExt::random(OsRng);
         let k_inv = k.invert().unwrap();
 
-        let r_point = Secp256k1Affine::from(G * k).coordinates().unwrap();
+        let r_point = Secp256r1Affine::from(G * k).coordinates().unwrap();
         let x = r_point.x();
         let x_bigint = fe_to_biguint(x);
         let r = biguint_to_fe::<Fq>(&x_bigint);

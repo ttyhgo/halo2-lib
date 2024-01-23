@@ -101,8 +101,10 @@ mod fp {
         }
     }
 
+    use ff::Field;
     #[test]
     fn test_fp() {
+        
         let a = Fq::random(OsRng);
         let b = Fq::random(OsRng);
 
@@ -233,6 +235,7 @@ mod fp12 {
         }
     }
 
+    use ff::Field;
     #[test]
     fn test_fp12() {
         let k = 23;

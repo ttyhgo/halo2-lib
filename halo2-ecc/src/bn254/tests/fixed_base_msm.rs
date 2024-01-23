@@ -220,6 +220,7 @@ fn test_fixed_base_msm() {
     prover.assert_satisfied();
 }
 
+use ff::Field;
 #[cfg(test)]
 #[test]
 fn bench_fixed_base_msm() -> Result<(), Box<dyn std::error::Error>> {
