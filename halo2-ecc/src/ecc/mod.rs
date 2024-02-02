@@ -161,9 +161,9 @@ where
 
     // let lambda_numberator = chip.add_constant_no_carry(ctx, &three_x_sq, FC::fe_to_constant(C::a()));
     let lambda_numberator = if C::a().is_zero().into() {
-        chip.add_constant_no_carry(ctx, &three_x_sq, FC::fe_to_constant(C::a()))
-    }else{
         three_x_sq
+    }else{
+        chip.add_constant_no_carry(ctx, &three_x_sq, FC::fe_to_constant(C::a()))
     };
     let lambda = chip.divide_unsafe(ctx, &lambda_numberator, &two_y);
 
